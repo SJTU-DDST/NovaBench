@@ -1,10 +1,13 @@
 #include "common/common.h"
-#include "common/log.h"
+#include "log/log.h"
+#include <cstring>
+#include <fmt/core.h>
+#include <sys/stat.h>
 
 namespace bench{
-    Fragment::Fragment() : is_ready_(false) {}
+    Fragment::Fragment() : is_ready_(false), is_complete_(false) {}
 
-    std::string Fragment::Debugstring() {
+    std::string Fragment::DebugString() {
         return fmt::format("[{},{}): {}-{}", range.key_start, range.key_end, server_id, dbid);
     }
 
@@ -12,6 +15,7 @@ namespace bench{
         return fmt::format("{}:{}:{}", server_id, ip, port);
     }
 
+// done
     std::vector<std::string> SplitByDelimiter(std::string *s, std::string delimiter) {
         size_t pos = 0;
         std::string token;
@@ -27,6 +31,7 @@ namespace bench{
         return tokens;
     }
 
+// done
     std::vector<uint32_t>
     SplitByDelimiterToInt(std::string *s, std::string delimiter) {
         size_t pos = 0;
@@ -43,14 +48,15 @@ namespace bench{
         return tokens;
     }
 
-    vector<Host> convert_hosts(string hosts_str) {
+// done
+    std::vector<Host> convert_hosts(std::string hosts_str) {
         BENCH_LOG(INFO) << hosts_str;
         std::vector<Host> hosts;
         std::stringstream ss_hosts(hosts_str);
         uint32_t host_id = 0;
         while (ss_hosts.good()) {
 //读入一个ip:port
-            string host_str;
+            std::string host_str;
             getline(ss_hosts, host_str, ',');
 
             if (host_str.empty()) {
@@ -58,7 +64,7 @@ namespace bench{
             }
             std::vector<std::string> ip_port;
             std::stringstream ss_ip_port(host_str);
-//ipheport提取出来放进去
+//ip和port提取出来放进去
             while (ss_ip_port.good()) {
                 std::string substr;
                 getline(ss_ip_port, substr, ':');
@@ -74,6 +80,7 @@ namespace bench{
         return hosts;
     }
 
+// done
     void mkdirs(const char *dir) {
         char tmp[1024];
         char *p = NULL;
@@ -93,10 +100,23 @@ namespace bench{
         mkdir(tmp, 0777);
     }
 
+// done
     std::string DBName(const std::string &dbname, uint32_t index) {
         return dbname + "/" + std::to_string(index);
     }
 
+// done
+    uint32_t nint_to_str(uint64_t x) {
+        uint32_t len = 0;
+        do {
+            x = x / 10;
+            len++;
+        } while (x);
+        return len;
+    }
+
+// done
+// 把x写入str里面用terminater_char结尾，然后返回长度
     uint32_t int_to_str(char *str, uint64_t x) {
         uint32_t len = 0, p = 0;
         do {
@@ -117,7 +137,9 @@ namespace bench{
         return len + 1;
     }
 
-    uint32_t str_to_int(const char *str, uint64_t *out, uint32_t nkey = 0) {
+// done
+// 从str里面读出int,并且返回长度
+    uint32_t str_to_int(const char *str, uint64_t *out, uint32_t nkey) {
         if (str[0] == MSG_TERMINATER_CHAR) {
             return 0;
         }
@@ -141,6 +163,15 @@ namespace bench{
         uint64_t hv = 0;
         str_to_int(key, &hv, nkey);
         return hv;
+    }
+
+// done    
+    void ParseDBIndexFromDBName(const std::string &dbname, uint32_t *index) {
+        int iend = dbname.size() - 1;
+        int istart = dbname.find_last_of('/') + 1;
+        uint64_t i64;
+        str_to_int(dbname.data() + istart, &i64, iend - istart + 1);
+        *index = i64;
     }
 
 }

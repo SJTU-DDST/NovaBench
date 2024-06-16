@@ -1,0 +1,6 @@
+config-0 # config代表新开一个config
+0,1 # 这行是ltc
+0,1 # 这行没有意义了
+0 # 启动时间
+0,5000000,0,0 # frag的信息 [) key_start key_end server_id dbid
+5000000,10000000,1,1

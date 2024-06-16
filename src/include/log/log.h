@@ -15,7 +15,7 @@ namespace bench{
         INFO = 2,
         DEBUG = 1,
         EVERYTHING = 0        
-    }
+    };
 
 // a kind of expression
 #define unlikely(x) __builtin_expect(!!(x), 0)

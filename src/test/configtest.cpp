@@ -19,7 +19,7 @@ DEFINE_int64(server_id, -1, "Server id.");//当前这个server的id
 // msg_size
 DEFINE_uint64(max_msg_size, 0, "max msg size");//用户消息的最大大小
 
-// partition number 这个直接在config里面搞
+// // partition number 这个直接在config里面搞
 // DEFINE_int32(partitions, 1, "how many instances in a server");//一个服务器起多少个
 
 // value length
@@ -31,7 +31,7 @@ DEFINE_string(ltc_config_path, "need value", "The path that stores the configura
 // connection workers
 DEFINE_uint64(num_conn_workers, 0, "Number of connection worker threads");//服务器端用于连接的thread数量
 
-// levels 没用
+// levels
 DEFINE_int32(level, 2, "Number of levels.");//level的数量
 
 // recovery 没用
@@ -99,6 +99,6 @@ int main(int argc, char *argv[]){
         BENCH_LOG(INFO) << c->DebugString();
     }
 
-    StartServer();
+    // StartServer();
     return 0;
 }

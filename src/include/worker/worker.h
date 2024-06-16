@@ -52,12 +52,12 @@ namespace bench{
             BENCH_ASSERT(request_buf != NULL);
             BENCH_ASSERT(buf != NULL);
             
-            memset(request_buf, 0, BenchConfig->max_msg_size);
-            memset(buf, 0, BenchConfig->max_msg_size);
+            memset(request_buf, 0, BenchConfig::config->max_msg_size);
+            memset(buf, 0, BenchConfig::config->max_msg_size);
         }
 
         void Start();
-    }
+    };
 
 }
 

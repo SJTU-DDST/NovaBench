@@ -73,6 +73,9 @@
         "variant": "cpp",
         "format": "cpp",
         "version": "cpp",
-        "any": "cpp"
+        "any": "cpp",
+        "ranges": "cpp",
+        "cfenv": "cpp",
+        "cerrno": "cpp"
     }
 }

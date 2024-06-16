@@ -20,6 +20,7 @@ namespace bench{
             } else {
                 BENCH_ASSERT(false) << "unknown database type";
             }
+            return new LevelDBDatabase(db_path);
         }
     };    
 }

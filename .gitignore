@@ -1,0 +1,7 @@
+db
+# external/*
+CMakeFiles
+CMakeCache.txt
+configtest
+libMyDataBase.a
+NovaBench

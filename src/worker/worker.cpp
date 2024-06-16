@@ -16,20 +16,26 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
+#include <event.h>
 
-#include "config/config,h"
+
+
+#include "config/config.h"
 #include "worker/worker.h"
 #include "common/common.h"
 #include "log/log.h"
 #include "databasefactory/databasefactory.h"
 
+#include <string>
+
 namespace bench{
     Connection *conns[BENCH_MAX_CONN];
     std::mutex conns_mutex;
 
+    // done
     // fd can be read
     SocketState socket_read_handler(int fd, short which, Connection *conn){
-        NOVA_ASSERT((which & EV_READ) > 0) << which;
+        BENCH_ASSERT((which & EV_READ) > 0) << which;
         Worker* worker = (Worker*) conn->worker;
         char* buf = worker->request_buf + worker->req_ind;
         bool complete = false;
@@ -65,12 +71,13 @@ namespace bench{
                 }
                 worker->req_ind += 1;
                 buf += 1;
-                BENCH_ASSERT(worker->req_ind < BENCHConfig::config->max_msg_size);                
+                BENCH_ASSERT(worker->req_ind < BenchConfig::config->max_msg_size);                
             }            
         }
         return COMPLETE;
     }
 
+    // done
     // fd can be writen
     SocketState socket_write_handler(int fd, Connection *conn){
         BENCH_ASSERT(conn->response_size < BenchConfig::config->max_msg_size);
@@ -104,11 +111,12 @@ namespace bench{
             }
             conn->response_ind += n;
             total = conn->response_ind;
-            store->stats.nwrites++;
+            // store->stats.nwrites++;
         } while (total < conn->response_size);
         return COMPLETE;                        
     }
 
+    // done
     // adjust after write
     void write_socket_complete(int fd, Connection *conn){
         Worker *worker = (Worker*) worker;
@@ -119,36 +127,177 @@ namespace bench{
         conn->response_ind = 0;
     }
 
+    // done
     // specific operations to address requests
     bool process_socket_get(int fd, Connection *conn, char *request_buf, uint32_t server_cfg_id){
         Worker* worker = (Worker*) conn->worker;
         uint64_t int_key = 0;
-        uint32_t nkey = str_to_int(request_buf, &int_key) - 1;
-        uint64_t hv = keyhash(request_buf, nkey);
+        uint32_t nkey = str_to_int(request_buf, &int_key) - 1; // key长度
+        uint64_t hv = keyhash(request_buf, nkey); // key值
 
         Fragment *frag = BenchConfig::home_fragment(hv, server_cfg_id);
         BENCH_ASSERT(frag) << fmt::format("cfg:{} key:{}", server_cfg_id, hv);
 
         if(!frag->is_ready_){
-            frag->is_ready_mutex_.lock();
-            while(!frag->is_ready_){
-                frag->is_ready_signal_.wait();
+            {
+                std::unique_lock<std::mutex> lock(frag->is_ready_mutex_);
+                frag->is_ready_signal_.wait(lock,
+                    [frag](){
+                        bool ready = frag->is_ready_;
+                        return ready;
+                    }
+                );
             }
-            frag->is_ready_mutex_.unlock();
+            // frag->is_ready_mutex_.lock();
+            // while(!frag->is_ready_){
+            //     frag->is_ready_signal_.wait();
+            // }
+            // frag->is_ready_mutex_.unlock();
         }
 
         Database *db = reinterpret_cast<Database*>(frag->db);
         BENCH_ASSERT(db);
-        std::string value;
-        db->get();
+        std::string value = db->get(std::string(request_buf, nkey));
 
-        con.response_buf = worker->buf;
+        conn->response_buf = worker->buf;
         uint32_t response_size = 0;
         char* response_buf = conn->response_buf;
+        uint32_t cfg_size = int_to_str(response_buf, server_cfg_id);
+        response_size += cfg_size;
+        response_buf += cfg_size;
+        uint32_t value_size = int_to_str(response_buf, value.size());
+        response_size += value_size;
+        response_buf += value_size;
+        memcpy(response_buf, value.data(), value.size());
+        response_buf[0] = MSG_TERMINATER_CHAR;
+        response_size += 1;
+        conn->response_size = response_size;
         
+        BENCH_ASSERT(conn->response_size < BenchConfig::config->max_msg_size);
+        
+        return true;
     }
 
+    // done
+    bool process_socket_put(int fd, Connection *conn, char *request_buf, uint32_t server_cfg_id){
+        Worker* worker = (Worker *)conn->worker;
+        char* buf = request_buf;
+        char *ckey;
+        uint64_t key = 0;
+        ckey = buf; // key第一个字符位置
+        int nkey = str_to_int(buf, &key) - 1; // 读出key和长度
+        buf += nkey + 1;
+        uint64_t nval;
+        buf += str_to_int(buf, &nval); // val长度
+        char* val = buf; // val第一个字符位置
+        uint64_t hv = keyhash(ckey, nkey);
+        Fragment* frag = BenchConfig::home_fragment(hv, server_cfg_id);
+        BENCH_ASSERT(frag) << fmt::format("cfg:{} key:{}", server_cfg_id, hv);
+        if (!frag->is_ready_) {
+            {
+                std::unique_lock<std::mutex> lock(frag->is_ready_mutex_);
+                frag->is_ready_signal_.wait(lock,
+                    [frag](){
+                        bool ready = frag->is_ready_;
+                        return ready;
+                    }
+                );
+            }
+            // frag->is_ready_mutex_.lock();
+            // while (!frag->is_ready_) {
+            //     frag->is_ready_signal_.wait();
+            // }
+            // frag->is_ready_mutex_.unlock();
+        }
 
+        auto* db = reinterpret_cast<Database*>(frag->db);
+        BENCH_ASSERT(db) << fmt::format("cfg:{} key:{}", server_cfg_id, hv);
+
+        db->put(std::string(ckey, nkey), std::string(val, nval));
+        
+        char *response_buf = worker->buf;
+        uint32_t response_size = 0;
+        uint32_t cfg_size = int_to_str(response_buf, server_cfg_id);
+        response_buf += cfg_size;
+        response_size += cfg_size;
+        response_buf[0] = MSG_TERMINATER_CHAR;
+        response_size += 1;
+        conn->response_buf = worker->buf;
+        conn->response_size = response_size;
+        return true;
+    }
+
+    // done
+    bool process_socket_scan(int fd, Connection *conn, char *request_buf, uint32_t server_cfg_id){
+        Worker* worker = (Worker*) conn->worker;
+        char* startkey;
+        uint64_t key = 0;
+        char *buf = request_buf;
+        startkey = buf;
+        int nkey = str_to_int(buf, &key) - 1;
+        buf += nkey + 1;
+        uint64_t nrecords;
+        buf += str_to_int(buf, &nrecords);
+        std::string skey(startkey, nkey);
+
+        BENCH_LOG(DEBUG) << fmt::format("memstore[{}]: scan fd:{} key:{} nkey:{} nrecords:{}", worker->thread_id_, fd, skey, nkey, nrecords);
+        uint64_t hv = keyhash(startkey, nkey);
+        auto cfg = BenchConfig::config->cfgs[server_cfg_id];
+        Fragment *frag = BenchConfig::home_fragment(hv, server_cfg_id);
+        BENCH_ASSERT(frag) << fmt::format("cfg:{} key:{}", server_cfg_id, hv);        
+
+        // uint64_t hv = keyhash(startkey, nkey);
+        // auto cfg = BenchConfig::config->cfgs[server_cfg_id];
+        // Fragment* frag = BenchConfig::home_fragment(hv, server_cfg_id);
+        // BENCH_ASSERT(frag) << fmt::format("cfg:{} key:{}", server_cfg_id, hv);
+    
+        int pivot_db_id = frag->dbid;
+        int read_records = 0;
+        uint64_t prior_last_key = -1;
+        uint64_t scan_size = 0;
+
+        conn->response_buf = worker->buf;
+        char* response_buf = conn->response_buf;
+        uint32_t cfg_size = int_to_str(response_buf, server_cfg_id);
+        response_buf += cfg_size;
+        scan_size += cfg_size;
+
+        while(read_records < nrecords && pivot_db_id < cfg->fragments.size()){
+            frag = cfg->fragments[pivot_db_id];
+            if(prior_last_key != -1 && prior_last_key != frag->range.key_start){
+                break;
+            }
+            if(frag->server_id != BenchConfig::config->my_server_id){
+                break;
+            }
+            if(!frag->is_ready_){
+                {
+                    std::unique_lock<std::mutex> lock(frag->is_ready_mutex_);
+                    frag->is_ready_signal_.wait(lock,
+                        [frag](){
+                            bool ready = frag->is_ready_;
+                            return ready;
+                        }
+                    );
+                }
+            }
+
+            // scan
+
+            reinterpret_cast<Database*>(frag->db)->scan(startkey, read_records, nrecords, response_buf, scan_size);
+            prior_last_key = frag->range.key_end;
+            pivot_db_id += 1;
+        }                
+    
+        BENCH_LOG(DEBUG) << fmt::format("Scan size:{}", scan_size);
+        conn->response_buf[scan_size] = MSG_TERMINATER_CHAR;
+        scan_size += 1;
+        conn->response_size = scan_size;
+        BENCH_ASSERT(conn->response_size < BenchConfig::config->max_msg_size);
+        return true;
+    }
+
+// done
     // check what request this is
     bool process_socket_request_handler(int fd, Connection *conn){
         auto worker = (Worker *) conn->worker;
@@ -176,20 +325,26 @@ namespace bench{
         } else if (msg_type == RequestType::PUT) {
             return process_socket_put(fd, conn, request_buf, server_cfg_id);
         } else if (msg_type == RequestType::REINITIALIZE_QP) {
-            return process_reintialize_qps(fd, conn);
+            // 不可能
+            BENCH_ASSERT(false) << "not supposed to be here";
         } else if (msg_type == RequestType::CLOSE_STOC_FILES) {
-            return process_close_stoc_files(fd, conn);
+            // 不可能
+            BENCH_ASSERT(false) << "not supposed to be here";
         } else if (msg_type == RequestType::STATS) {
-            return process_socket_stats_request(fd, conn);
+            // 不可能
+            BENCH_ASSERT(false) << "not supposed to be here";
         } else if (msg_type == RequestType::CHANGE_CONFIG) {
-            return process_socket_change_config_request(fd, conn);
+            // 不可能
+            BENCH_ASSERT(false) << "not supposed to be here";
         } else if (msg_type == RequestType::QUERY_CONFIG_CHANGE) {
-            return process_socket_query_ready_request(fd, conn);
+            // 不可能
+            BENCH_ASSERT(false) << "not supposed to be here";
         }
         BENCH_ASSERT(false) << msg_type;
         return false;
     }
 
+    // done
     // a connected client's request
     void event_handler(int fd, short which, void *arg){
         auto* conn = (Connection*) arg;
@@ -222,13 +377,14 @@ namespace bench{
         }
     }
 
+// done
 // new client connection
     void new_conn_handler(int fd, short which, void *arg){
         Worker* worker = (Worker*) arg;
         conns_mutex.lock();
         worker->conn_mu.lock();
         worker->nconns += worker->conn_queue.size();
-        if(worker->conn_queue() != 0){
+        if(worker->conn_queue.size() != 0){
             BENCH_LOG(DEBUG) << "memstore[" << worker->thread_id_ << "]: conns "<< worker->nconns;        
         }
         for(int i = 0; i < worker->conn_queue.size(); i++){
@@ -246,6 +402,7 @@ namespace bench{
         conns_mutex.unlock();
     }
 
+// done
 // connection thread begin
     void Worker::Start(){
         BENCH_LOG(DEBUG) << "memstore[" << thread_id_ << "]: "
@@ -266,6 +423,7 @@ namespace bench{
             BENCH_ASSERT(false) << "Can't allocate event base\n";
         }
         BENCH_LOG(DEBUG) << "Using Libevent with backend method " << event_base_get_method(base);
+        const int f = event_base_get_features(base);
         if((f & EV_FEATURE_ET)) {
             BENCH_LOG(DEBUG) << "Edge-triggered events are supported.";
         }
@@ -285,13 +443,14 @@ namespace bench{
             BENCH_ASSERT(
                     event_assign(&new_conn_timer_event, base, -1, EV_PERSIST,
                                     new_conn_handler, (void *) this) == 0); // 这里没有监听任何fd，只是定时调用 其实就是每个worker
-            NOVA_ASSERT(event_add(&new_conn_timer_event, &tv) == 0);
+            BENCH_ASSERT(event_add(&new_conn_timer_event, &tv) == 0);
         }
 
         BENCH_ASSERT(event_base_loop(base, 0) == 0);
         BENCH_LOG(INFO) << "started";
     }
 
+// done
 // init a connection
     void Connection::Init(int f, void *store) {
         fd = f;
@@ -303,19 +462,20 @@ namespace bench{
         event_flags = EV_READ | EV_PERSIST;
     }
 
+// done
 // refresh event flag
     void Connection::UpdateEventFlags(int new_flags) {
         if (event_flags == new_flags) {
             return;
         }
         event_flags = new_flags;
-        NOVA_ASSERT(event_del(&event) == 0) << fd;
-        NOVA_ASSERT(
+        BENCH_ASSERT(event_del(&event) == 0) << fd;
+        BENCH_ASSERT(
                 event_assign(&event, ((Worker *) worker)->base, fd,
                              new_flags,
                              event_handler,
                              this) ==
                 0) << fd;
-        NOVA_ASSERT(event_add(&event, 0) == 0) << fd;
+        BENCH_ASSERT(event_add(&event, 0) == 0) << fd;
     }
 }

@@ -14,6 +14,7 @@ namespace bench{
         // for connection
         int nport_;
         int listen_fd_ = -1;
+        struct event_base *base;
 
         // db
         std::vector<Database*> dbs_;
@@ -33,7 +34,7 @@ namespace bench{
         void Start();
         
         void SetupListener();
-    }
+    };
 }
 
 
